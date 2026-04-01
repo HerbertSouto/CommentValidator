@@ -1,84 +1,74 @@
 # Classificador de Comentários
 
-Este projeto é uma solução para classificar comentários em português em
-três categorias: **Positivo**, **Negativo** e **Neutro**.
+Classifica o sentimento de comentários do Instagram em **Positivo**, **Negativo** e **Neutro** usando o modelo **pysentimiento** (BERTimbau), treinado especificamente em português de redes sociais.
 
-Utiliza um pipeline de **Machine Learning** baseado em **TF-IDF +
-Regressão Logística** (com balanceamento de classes via oversampling),
-além de um módulo de pré-processamento customizado que inclui conversão
-de emojis em palavras-chave.
+## Pré-requisitos
 
-A aplicação web é construída com **Streamlit**, permitindo que usuários
-façam upload de um arquivo CSV com comentários para classificação,
-validem resultados e baixem os arquivos processados.
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) — Windows, necessário para o PyTorch
 
-foi utilizado o site https://pt.exportcomments.com/ para exportação dos comentários.
+## Instalação
 
-------------------------------------------------------------------------
+```bash
+git clone https://github.com/HerbertSouto/CommentValidator.git
+cd CommentValidator
+uv sync
+```
 
-## 🚀 Funcionalidades
+Na primeira execução o modelo (~500MB) é baixado automaticamente do HuggingFace.
 
--   **Pré-processamento de Texto**
-    -   Limpeza de menções, hashtags e URLs.\
-    -   Substituição de emojis por palavras (ex.: ❤️ → "amor").\
-    -   Normalização de repetições de caracteres.
--   **Classificação Automática**
-    -   Combinação de **TF-IDF** com **Logistic Regression**.\
-    -   Classes: **Positivo (1)**, **Neutro (0)**, **Negativo (-1)**.
--   **Treinamento Contínuo**
-    -   Script para atualizar o dataset com novos comentários validados
-        (`update_dataset.py`).\
-    -   Re-treino automático do modelo com balanceamento de classes.
--   **Aplicação Web (Streamlit)**
-    -   Upload de CSVs com comentários.\
-    -   Exibição dos resultados classificados.\
-    -   Validação/edição dos comentários dentro da própria interface.\
-    -   Download de arquivos classificados ou validados.
+## Rodando
 
-------------------------------------------------------------------------
+```bash
+uv run streamlit run src/app/main.py
+```
 
-## 📊 Desempenho do Modelo
+Acesse `http://localhost:8501`.
 
-Último treino realizado (com **2988 comentários válidos** e oversampling
-balanceado):
+## Como usar
 
-  Classe          Precision   Recall   F1-score   Suporte
-  --------------- ----------- -------- ---------- ---------
-  Negativo (-1)   0.99        0.99     0.99       413
-  Neutro (0)      0.74        0.83     0.78       70
-  Positivo (1)    0.93        0.86     0.89       115
-  **Acurácia**                         **0.94**   598
+**Aba Classificar**
+1. Upload de um CSV com a coluna `Comment`
+2. Aguarda a classificação com barra de progresso
+3. Vê resumo por sentimento e tabela com nível de confiança
+4. Baixa o CSV classificado ou envia para validação manual
 
-📌 **Resumo:** O modelo apresenta excelente desempenho para comentários
-**Negativos e Positivos**, e melhora significativa na classe **Neutro**,
-que era a mais frágil.
+**Aba Validação Manual**
+1. Corrige os sentimentos errados via dropdown
+2. Marca o checkbox nos comentários revisados
+3. Baixa o CSV validado
 
-------------------------------------------------------------------------
+## Formato do CSV de entrada
 
-## 🛠️ Como rodar localmente
+O arquivo deve conter ao menos a coluna `Comment`:
 
-1.  Clone o repositório:
+```
+Comment
+Que conteúdo incrível!
+Não gostei nada...
+```
 
-    ``` bash
-    git clone <url-do-repo>
-    cd CommentValidator
-    ```
+Arquivos exportados do [exportcomments.com](https://pt.exportcomments.com) já vêm no formato correto.
 
-2.  Instale dependências (usando [uv](https://github.com/astral-sh/uv)):
+## Modos de funcionamento
 
-    ``` bash
-    uv sync
-    ```
+O classificador detecta automaticamente o melhor modo disponível:
 
-3.  Rode a aplicação Streamlit:
+| Modo | Quando ativa | Qualidade |
+|------|-------------|-----------|
+| **Local** (pysentimiento) | PyTorch disponível | Melhor |
+| **API** (HuggingFace) | `HF_TOKEN` definido | Boa |
+| **TF-IDF** (fallback) | Nenhum dos anteriores | Básica |
 
-    ``` bash
-    uv run streamlit run src/app/main.py
-    ```
+Para usar o modo API, crie um token gratuito em [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) e defina no ambiente:
 
-4.  (Opcional) Atualize dataset e re-treine o modelo:
+```bash
+HF_TOKEN=hf_xxxxxxxxxxxxxxxxx
+```
 
-    ``` bash
-    uv run python src/jobs/update_dataset.py
-    uv run python src/training/train.py
-    ```
+## Re-treinar o modelo TF-IDF (fallback)
+
+```bash
+uv run python src/training/train.py
+```
