@@ -21,6 +21,9 @@ data/processed/
 # Cache HuggingFace (modelos baixados)
 .cache/
 
+# Sessão Instagram (cookie salvo localmente)
+.instagram_session*
+
 # OS
 .DS_Store
 Thumbs.db
