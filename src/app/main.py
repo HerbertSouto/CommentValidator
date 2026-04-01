@@ -1,111 +1,430 @@
 import streamlit as st
 import pandas as pd
-import joblib
 import os
 import sys
-import subprocess
-from sentimentizer.preprocess import limpar_texto  # Função de pré-processamento
 
-MODEL_PATH = "models/modelo_hibrido.pkl"
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from sentimentizer.analyzer import get_analyzer, classificar
+
 PENDENTES_PATH = "data/raw/pendentes_validacao.csv"
 
-def mapear_classe(pred):
-    if pred == 1:
-        return "Positivo"
-    elif pred == -1:
-        return "Negativo"
-    elif pred == 0:
-        return "Neutro"
-    return str(pred)
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURAÇÃO DA PÁGINA
+# Deve ser a primeira chamada Streamlit — define aba do browser e layout.
+# ─────────────────────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Classificador de Comentários",
+    page_icon="💬",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-st.title("Classificador de Comentários")
-st.write("Envie um arquivo CSV com a coluna 'Comment' para classificar os comentários.")
+# ─────────────────────────────────────────────────────────────────────────────
+# CSS GLOBAL
+# Importa DM Sans (corpo) e DM Mono (dados/números) do Google Fonts.
+# Customiza componentes Streamlit que o config.toml não cobre.
+# ─────────────────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* ── Fontes ─────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
 
-# Upload e classificação
-uploaded_file = st.file_uploader("Escolha um arquivo CSV", type=["csv"])
-if uploaded_file is not None:
-    try:
-        df = pd.read_csv(uploaded_file, usecols=["Comment"])
-    except Exception:
-        st.error("Erro ao ler o CSV. Certifique-se de que ele contém a coluna 'Comment'.")
+html, body, [class*="css"] {
+    font-family: 'DM Sans', sans-serif;
+}
+
+/* Números e dados tabulares usam fonte mono — leitura mais precisa */
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"],
+.dataframe td {
+    font-family: 'DM Mono', monospace !important;
+}
+
+/* ── Cabeçalho ──────────────────────────────────────────────────────────── */
+h1 {
+    font-weight: 600;
+    font-size: 1.75rem !important;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.15rem !important;
+}
+
+/* ── Cards de métrica ───────────────────────────────────────────────────── */
+/* Usa var() do Streamlit — funciona em tema claro e escuro sem hardcode */
+[data-testid="stMetric"] {
+    background: var(--secondary-background-color);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    transition: border-color 0.2s;
+}
+[data-testid="stMetric"]:hover {
+    border-color: #6366f1;
+}
+
+[data-testid="stMetricLabel"] {
+    font-size: 0.7rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.55;
+}
+
+[data-testid="stMetricValue"] {
+    font-size: 2rem !important;
+    font-weight: 500;
+}
+
+[data-testid="stMetricDelta"] {
+    font-size: 0.75rem !important;
+}
+
+/* ── Botão primário ─────────────────────────────────────────────────────── */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #6366f1, #818cf8) !important;
+    border: none !important;
+    color: #fff !important;         /* texto sempre branco — contraste garantido */
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    border-radius: 8px;
+    transition: opacity 0.15s, transform 0.1s;
+}
+.stButton > button[kind="primary"]:hover {
+    opacity: 0.88;
+    transform: translateY(-1px);
+}
+
+/* ── Botão secundário e download ────────────────────────────────────────── */
+/* Borda com a cor de texto atual — legível em qualquer tema */
+.stButton > button[kind="secondary"],
+.stDownloadButton > button {
+    background: transparent !important;
+    border: 1px solid rgba(99, 102, 241, 0.35) !important;
+    color: var(--text-color) !important;
+    border-radius: 8px;
+    transition: border-color 0.15s;
+}
+.stButton > button[kind="secondary"]:hover,
+.stDownloadButton > button:hover {
+    border-color: #6366f1 !important;
+}
+
+/* ── Upload area ────────────────────────────────────────────────────────── */
+/* Remove background hardcoded — herda do tema; mantém só a borda e raio */
+[data-testid="stFileUploaderDropzone"] {
+    border: 1.5px dashed rgba(99, 102, 241, 0.4) !important;
+    border-radius: 12px !important;
+    transition: border-color 0.2s;
+}
+[data-testid="stFileUploaderDropzone"]:hover {
+    border-color: #6366f1 !important;
+}
+
+/* Botão "Browse files" dentro do uploader — sempre legível */
+[data-testid="stFileUploaderDropzone"] button {
+    background: var(--secondary-background-color) !important;
+    color: var(--text-color) !important;
+    border: 1px solid rgba(99, 102, 241, 0.4) !important;
+    border-radius: 6px !important;
+}
+
+/* ── Abas ───────────────────────────────────────────────────────────────── */
+[data-baseweb="tab"] {
+    font-size: 0.85rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+}
+[aria-selected="true"][data-baseweb="tab"] {
+    color: #6366f1 !important;
+}
+
+/* ── Progress bar com gradiente indigo ──────────────────────────────────── */
+[data-testid="stProgressBar"] > div > div {
+    background: linear-gradient(90deg, #6366f1, #a5b4fc) !important;
+    border-radius: 99px;
+}
+
+/* ── Divisória ──────────────────────────────────────────────────────────── */
+hr {
+    margin: 1.25rem 0 !important;
+    opacity: 0.15;
+}
+
+/* ── Alertas ────────────────────────────────────────────────────────────── */
+[data-testid="stAlert"] {
+    border-radius: 8px !important;
+    font-size: 0.85rem;
+}
+
+/* ── Cabeçalho da tabela em uppercase discreto ──────────────────────────── */
+[data-testid="stDataFrame"] th {
+    font-size: 0.7rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    opacity: 0.55;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CARREGAMENTO DO MODELO
+# @st.cache_resource garante que o modelo é carregado uma única vez por sessão
+# do servidor — reutilizado por todos os usuários sem recarregar (~500MB).
+# O spinner aparece antes de qualquer renderização para evitar layout shift.
+# ─────────────────────────────────────────────────────────────────────────────
+@st.cache_resource
+def carregar_modelo():
+    return get_analyzer()
+
+
+with st.spinner("Iniciando classificador..."):
+    modo = carregar_modelo()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CABEÇALHO
+# Título + caption numa linha; badge de status no canto direito.
+# ─────────────────────────────────────────────────────────────────────────────
+col_titulo, col_status = st.columns([5, 1])
+
+with col_titulo:
+    st.title("💬 Classificador de Comentários")
+    st.caption("Analise o sentimento de comentários do Instagram em segundos.")
+
+with col_status:
+    # Badge de modo — só mostra aviso se estiver no fallback TF-IDF
+    if modo in ("local", "api"):
+        st.success("Online", icon="✅")
     else:
-        # Preenche valores nulos e cria a coluna limpa
-        df["Comment"] = df["Comment"].fillna("")
-        df["Comment_limpo"] = df["Comment"].apply(limpar_texto)
+        st.warning("Modo básico", icon="⚠️")
 
-        # Verificação extra: não rodar modelo se não houver comentários válidos
-        if df["Comment_limpo"].str.strip().eq("").all():
-            st.warning("⚠️ Nenhum comentário válido encontrado após pré-processamento.")
-        else:
-            # Carrega o modelo treinado
-            model = joblib.load(MODEL_PATH)
+st.divider()
 
-            # Faz a predição
-            df["Predicao"] = model.predict(df["Comment_limpo"])
-            df["Classe"] = df["Predicao"].apply(mapear_classe)
+# ─────────────────────────────────────────────────────────────────────────────
+# ABAS PRINCIPAIS
+# Separação clara entre fluxo de classificação e fluxo de validação.
+# Tabs evitam scroll infinito e deixam cada função no seu contexto.
+# ─────────────────────────────────────────────────────────────────────────────
+aba_classificar, aba_validar = st.tabs(["📂  Classificar", "✏️  Validação Manual"])
 
-            st.subheader("Comentários Classificados")
-            st.dataframe(df[["Comment", "Classe"]])
 
-            # Download CSV
-            csv_data = df[["Comment", "Classe"]].to_csv(index=False, sep=";").encode("utf-8")
-            st.download_button(
-                label="⬇️ Download CSV Classificado",
-                data=csv_data,
-                file_name="comentarios_classificados.csv",
-                mime="text/csv"
-            )
+# ═════════════════════════════════════════════════════════════════════════════
+# ABA 1 — CLASSIFICAR
+# ═════════════════════════════════════════════════════════════════════════════
+with aba_classificar:
 
-            # 🔹 Validar/Editar comentários
-            if st.button("✏️ Validar/Editar Comentários"):
-                df_validacao = df[["Comment", "Classe"]].copy()
-                df_validacao["Validado"] = "Não"  # default
-                df_validacao.to_csv(PENDENTES_PATH, sep=";", index=False, encoding="utf-8")
-                st.success("Arquivo salvo em data/raw/pendentes_validacao.csv. Corrija abaixo ou edite manualmente antes do re-treino.")
+    # ── Upload ───────────────────────────────────────────────────────────────
+    # file_uploader aceita apenas CSV; mensagem de ajuda inline.
+    uploaded_file = st.file_uploader(
+        "Selecione o arquivo CSV de comentários",
+        type=["csv"],
+        help="O arquivo deve conter uma coluna chamada **Comment**.",
+        label_visibility="collapsed",
+    )
 
-st.markdown("---")
-
-# Mostrar status e editor de validação
-if os.path.exists(PENDENTES_PATH):
-    df_pend = pd.read_csv(PENDENTES_PATH, sep=";", encoding="utf-8-sig")
-
-    if "Validado" in df_pend.columns:
-        total = len(df_pend)
-        validados = (df_pend["Validado"].astype(str).str.lower() == "sim").sum()
-        st.info(f"📊 Arquivo de validação encontrado: {validados}/{total} comentários validados.")
-
-        # 🔹 Editor de validação dentro do app
-        st.subheader("Validação de Comentários")
-        edited_df = st.data_editor(
-            df_pend,
-            width="stretch",   # substitui use_container_width
-            num_rows="dynamic"
+    if uploaded_file is None:
+        # Estado vazio — instrução central, não deixar a tela em branco
+        st.markdown(
+            "<p style='color:#475569; font-size:0.9rem; margin-top:0.5rem;'>"
+            "Arraste um arquivo CSV aqui ou clique para selecionar.</p>",
+            unsafe_allow_html=True,
         )
 
-        if st.button("💾 Salvar validações"):
-            edited_df.to_csv(PENDENTES_PATH, sep=";", index=False, encoding="utf-8")
-            st.success("Validações salvas com sucesso!")
-
     else:
-        st.warning("📂 Arquivo de validação encontrado, mas sem coluna 'Validado'.")
-else:
-    st.info("Nenhum arquivo pendente de validação encontrado.")
+        # ── Leitura do CSV ────────────────────────────────────────────────────
+        try:
+            df = pd.read_csv(uploaded_file, usecols=["Comment"])
+        except Exception:
+            st.error(
+                "Não foi possível ler o arquivo. "
+                "Verifique se ele contém a coluna **Comment**.",
+                icon="🚨",
+            )
+            st.stop()
 
-st.markdown("---")
+        df["Comment"] = df["Comment"].fillna("").astype(str)
+        validos = df["Comment"].str.strip().ne("")
+        total = int(validos.sum())
 
-# 🔄 Re-treino (só funciona se houver registros validados)
-if st.button("🔄 Re-treinar Modelo com Novos Dados"):
-    if os.path.exists(PENDENTES_PATH):
-        df_check = pd.read_csv(PENDENTES_PATH, sep=";", encoding="utf-8-sig")
-        if "Validado" in df_check.columns and (df_check["Validado"].astype(str).str.lower() == "sim").any():
-            with st.spinner("Atualizando dataset e re-treinando modelo..."):
-                try:
-                    subprocess.run([sys.executable, "src/jobs/update_dataset.py"], check=True)
-                    subprocess.run([sys.executable, "src/training/train.py"], check=True)
-                    st.success("✅ Modelo atualizado com sucesso! Recarregue a página para usar o novo modelo.")
-                except Exception as e:
-                    st.error(f"Erro no re-treino: {e}")
+        if not validos.any():
+            st.warning("Nenhum comentário válido encontrado no arquivo.", icon="⚠️")
+            st.stop()
+
+        # ── Classificação com progress bar real ───────────────────────────────
+        # Atualiza a barra a cada comentário — dá feedback concreto ao usuário
+        # em vez de um spinner que não informa quanto falta.
+        barra = st.progress(0, text=f"Analisando comentários...  0 / {total}")
+        resultados = []
+
+        for i, texto in enumerate(df.loc[validos, "Comment"], start=1):
+            resultados.append(classificar(texto))
+            pct = i / total
+            barra.progress(pct, text=f"Analisando comentários...  {i} / {total}")
+
+        barra.empty()  # Remove a barra após concluir — não deixa "100%" estático
+
+        # ── Monta colunas de resultado ────────────────────────────────────────
+        df.loc[validos, "Classe"]      = [r["label"]              for r in resultados]
+        # Multiplica por 100 para exibir como percentual inteiro (ex: 99, não 0.99)
+        df.loc[validos, "Confiança"]   = [r["confianca"] * 100    for r in resultados]
+        df.loc[validos, "_classe_num"] = [r["classe"]              for r in resultados]
+
+        df["Classe"]    = df["Classe"].fillna("Neutro")
+        df["Confiança"] = df["Confiança"].fillna(0.0)
+
+        # ── Métricas de resumo ────────────────────────────────────────────────
+        # Três cards com contagem + percentual de cada sentimento.
+        # delta_color="inverse" nos negativos: seta vermelha = algo a melhorar.
+        st.subheader("Resumo", divider=False)
+        contagem = df["Classe"].value_counts()
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric(
+            "Positivos ✅",
+            contagem.get("Positivo", 0),
+            f"{contagem.get('Positivo', 0) / total:.0%} do total",
+        )
+        c2.metric(
+            "Negativos ❌",
+            contagem.get("Negativo", 0),
+            f"{contagem.get('Negativo', 0) / total:.0%} do total",
+            delta_color="inverse",
+        )
+        c3.metric(
+            "Neutros ➖",
+            contagem.get("Neutro", 0),
+            f"{contagem.get('Neutro', 0) / total:.0%} do total",
+            delta_color="off",
+        )
+
+        st.divider()
+
+        # ── Tabela de resultados ──────────────────────────────────────────────
+        # column_config define label, largura e tipo de cada coluna.
+        # ProgressColumn para confiança dá leitura visual imediata.
+        st.subheader("Comentários Classificados", divider=False)
+
+        st.dataframe(
+            df[["Comment", "Classe", "Confiança"]],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Comment": st.column_config.TextColumn(
+                    "Comentário",
+                    width="large",
+                ),
+                "Classe": st.column_config.TextColumn(
+                    "Sentimento",
+                    width="small",
+                ),
+                "Confiança": st.column_config.ProgressColumn(
+                    "Confiança",
+                    min_value=0,
+                    max_value=100,
+                    format="%d%%",  # valor já está em 0-100, exibe como "99%"
+                    width="small",
+                ),
+            },
+        )
+
+        # ── Ações pós-classificação ───────────────────────────────────────────
+        # Dois botões lado a lado; download à esquerda (ação principal),
+        # validação à direita (fluxo secundário opcional).
+        st.divider()
+        col_dl, col_val, _ = st.columns([1.2, 1.2, 3])
+
+        csv_bytes = (
+            df[["Comment", "Classe"]]
+            .assign(Confianca=df["Confiança"].apply(lambda v: f"{v:.0%}"))
+            .to_csv(index=False, sep=";", encoding="utf-8")
+            .encode("utf-8")
+        )
+        col_dl.download_button(
+            label="⬇️  Baixar CSV",
+            data=csv_bytes,
+            file_name="comentarios_classificados.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+        if col_val.button("✏️  Enviar para Validação", use_container_width=True):
+            df_val = df[["Comment", "Classe"]].copy()
+            df_val["Validado"] = "Não"
+            os.makedirs(os.path.dirname(PENDENTES_PATH), exist_ok=True)
+            df_val.to_csv(PENDENTES_PATH, sep=";", index=False, encoding="utf-8")
+            st.success("Enviado! Abra a aba **Validação Manual** para revisar.", icon="✅")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ABA 2 — VALIDAÇÃO MANUAL
+# Permite revisar e corrigir predições antes de usar os dados para re-treino.
+# ═════════════════════════════════════════════════════════════════════════════
+with aba_validar:
+
+    if not os.path.exists(PENDENTES_PATH):
+        # Estado vazio — orienta o usuário sem deixar a tela "quebrada"
+        st.info(
+            "Nenhuma fila de validação encontrada.  \n"
+            "Classifique um CSV na aba **Classificar** e clique em "
+            "**Enviar para Validação**.",
+            icon="ℹ️",
+        )
+    else:
+        df_pend = pd.read_csv(PENDENTES_PATH, sep=";", encoding="utf-8-sig")
+
+        if "Validado" not in df_pend.columns:
+            st.warning("Arquivo de validação sem coluna 'Validado'.", icon="⚠️")
         else:
-            st.warning("⚠️ Nenhum comentário validado encontrado. Valide ao menos um comentário antes de re-treinar.")
-    else:
-        st.warning("⚠️ Nenhum arquivo de pendentes encontrado.")
+            total_p = len(df_pend)
+
+            # Converte "Sim"/"Não" → bool para usar CheckboxColumn
+            # Checkbox é muito mais rápido de marcar do que um selectbox
+            df_pend["Validado"] = df_pend["Validado"].astype(str).str.lower() == "sim"
+
+            # ── Editor de validação ───────────────────────────────────────────
+            edited_df = st.data_editor(
+                df_pend,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",   # evita adição acidental de linhas
+                column_config={
+                    "Comment": st.column_config.TextColumn(
+                        "Comentário",
+                        width="large",
+                        disabled=True,          # texto original não é editável
+                    ),
+                    "Classe": st.column_config.SelectboxColumn(
+                        "Sentimento",
+                        options=["Positivo", "Negativo", "Neutro"],
+                        width="small",
+                    ),
+                    "Validado": st.column_config.CheckboxColumn(
+                        "Validado?",
+                        width="small",
+                        default=False,
+                    ),
+                },
+            )
+
+            # ── Progresso em tempo real (lê do edited_df) ─────────────────────
+            # Com checkbox o estado é imediato — o contador acompanha cada clique
+            validados = int(edited_df["Validado"].sum())
+            pct = validados / total_p if total_p else 0
+
+            st.progress(pct, text=f"**{validados} de {total_p}** comentários validados")
+
+            st.divider()
+
+            # ── Download ──────────────────────────────────────────────────────
+            # Exporta todas as linhas com os sentimentos corrigidos.
+            # Nenhum arquivo é salvo no servidor — tudo em memória.
+            csv_val = (
+                edited_df[["Comment", "Classe"]]
+                .to_csv(index=False, sep=";", encoding="utf-8")
+                .encode("utf-8")
+            )
+            st.download_button(
+                label="⬇️  Baixar CSV Validado",
+                data=csv_val,
+                file_name="comentarios_validados.csv",
+                mime="text/csv",
+            )

@@ -1,23 +1,20 @@
 import os
+import sys
 import json
 import joblib
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report
-from sklearn.linear_model import LogisticRegression
 from collections import Counter
 
-# Oversampling
-from imblearn.over_sampling import RandomOverSampler
+# Garante que src/ está no path para imports relativos
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from sentimentizer.pipeline import pipeline_hibrido
 
 DATASET_PATH = "data/processed/dataset_atualizado.csv"
 MODEL_PATH = "models/modelo_hibrido.pkl"
 METRICS_PATH = "models/metrics.json"
-
-# Configuração
-USE_OVERSAMPLING = True   # 👈 mantém ligado
 
 # 1. Carregar dataset
 if not os.path.exists(DATASET_PATH):
@@ -25,61 +22,51 @@ if not os.path.exists(DATASET_PATH):
 
 df_total = pd.read_csv(DATASET_PATH, sep=";", encoding="utf-8-sig")
 
-# Garante colunas obrigatórias
 required_cols = {"texto_limpo", "y"}
 if not required_cols.issubset(df_total.columns):
     raise ValueError(f"❌ Dataset deve conter as colunas: {required_cols}")
 
-# Remove linhas inválidas
 df_total = df_total.dropna(subset=["texto_limpo", "y"])
+df_total = df_total[df_total["texto_limpo"].str.strip() != ""]
 df_total["y"] = df_total["y"].astype(int)
 
-print(f"✅ Dataset carregado: {len(df_total)} registros válidos após limpeza")
+print(f"[OK] Dataset carregado: {len(df_total)} registros validos")
+print(f"[INFO] Distribuicao das classes: {Counter(df_total['y'])}")
 
 X = df_total["texto_limpo"]
 y = df_total["y"]
 
-# 2. Split treino/teste
+# 2. Split treino/teste estratificado
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-print("\n📊 Distribuição original (treino):", Counter(y_train))
-print("📊 Distribuição original (teste):", Counter(y_test))
+print(f"\n[INFO] Distribuicao treino: {Counter(y_train)}")
+print(f"[INFO] Distribuicao teste:  {Counter(y_test)}")
 
-# 3. Oversampling simples (RandomOverSampler)
-if USE_OVERSAMPLING:
-    ros = RandomOverSampler(random_state=42)
-    X_train, y_train = ros.fit_resample(X_train.to_frame(), y_train)
-    X_train = X_train["texto_limpo"]  # volta para Series
-    print("📊 Distribuição após oversampling (treino):", Counter(y_train))
-    print(f"🔄 Oversampling aplicado. Novo tamanho de treino: {len(X_train)} registros")
+# 3. Treinar pipeline híbrido (TF-IDF + Lexicon + Logistic Regression)
+# Nota: class_weight='balanced' já está no pipeline; não usar oversampling junto.
+print("\n[INFO] Treinando pipeline hibrido (TF-IDF + Lexicon)...")
+pipeline_hibrido.fit(X_train, y_train)
 
-# 4. Pipeline (TF-IDF + Logistic Regression atualizado)
-pipeline = Pipeline([
-    ("tfidf", TfidfVectorizer()),
-    ("clf", LogisticRegression(
-        max_iter=500,
-        class_weight="balanced",
-        solver="lbfgs"  # sem multi_class para evitar warning
-    ))
-])
+# 4. Validação cruzada (5-fold) para estimativa mais confiável
+cv_scores = cross_val_score(pipeline_hibrido, X_train, y_train, cv=5, scoring="f1_macro")
+print(f"[INFO] Cross-validation F1-macro (5-fold): {cv_scores.mean():.3f} +/- {cv_scores.std():.3f}")
 
-# 5. Treinar modelo
-pipeline.fit(X_train, y_train)
-
-# 6. Avaliação
-y_pred = pipeline.predict(X_test)
+# 5. Avaliação no conjunto de teste
+y_pred = pipeline_hibrido.predict(X_test)
 report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
-print("\n📊 Relatório de Classificação (Logistic Regression)")
-print(classification_report(y_test, y_pred, zero_division=0))
+print("\n[INFO] Relatorio de Classificacao (Teste)")
+print(classification_report(y_test, y_pred, zero_division=0,
+                             target_names=["Negativo (-1)", "Neutro (0)", "Positivo (1)"]))
 
-# 7. Salvar modelo
+# 6. Salvar modelo e métricas
 os.makedirs("models", exist_ok=True)
-joblib.dump(pipeline, MODEL_PATH)
-print(f"\n💾 Modelo salvo em '{MODEL_PATH}'")
+joblib.dump(pipeline_hibrido, MODEL_PATH)
+print(f"[OK] Modelo salvo em '{MODEL_PATH}'")
 
-# 8. Salvar métricas em JSON
+report["cv_f1_macro_mean"] = float(cv_scores.mean())
+report["cv_f1_macro_std"] = float(cv_scores.std())
 with open(METRICS_PATH, "w", encoding="utf-8") as f:
     json.dump(report, f, indent=4, ensure_ascii=False)
-print(f"📊 Métricas salvas em '{METRICS_PATH}'")
+print(f"[OK] Metricas salvas em '{METRICS_PATH}'")

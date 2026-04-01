@@ -1,0 +1,26 @@
+# Ambiente virtual
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Dados operacionais (não versionar comentários dos usuários)
+data/raw/
+data/processed/
+
+# Variáveis de ambiente
+.env
+.env.local
+
+# Cache HuggingFace (modelos baixados)
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db

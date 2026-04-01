@@ -1,5 +1,8 @@
 import os
+import sys
 import pandas as pd
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from sentimentizer.preprocess import limpar_texto
 
 # Caminhos

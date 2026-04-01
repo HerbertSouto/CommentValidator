@@ -1,13 +1,13 @@
 import nltk
 import pandas as pd
 from nltk.corpus import stopwords
-from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
+from sentimentizer.preprocess import LexiconScoreTransformer, ajustar_contexto  # noqa: F401
 
 # Baixar stopwords se necessário
-nltk.download('stopwords')
+nltk.download('stopwords', quiet=True)
 portuguese_stopwords = stopwords.words('portuguese')
 
 # Configuração do TfidfVectorizer
@@ -91,41 +91,12 @@ lexicon_palavras = {
     "explosivo": 0
 }
 
-# Importa funções de pré-processamento do módulo preprocess.py
-from preprocess import ajustar_contexto
-
-# Define o transformador do lexicon
-class LexiconScoreTransformer(BaseEstimator, TransformerMixin):
-    def __init__(self, lexicon, usar_contexto=False, escala=1.0):
-        self.lexicon = lexicon
-        self.usar_contexto = usar_contexto
-        self.escala = escala
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X, y=None):
-        scores = []
-        for texto in X:
-            if self.usar_contexto:
-                score = ajustar_contexto(texto, self.lexicon)
-            else:
-                palavras = texto.split()
-                score = sum([self.lexicon.get(p, 0) for p in palavras])
-            scores.append(score * self.escala)
-        return pd.DataFrame(scores, columns=["lexicon_score"])
-
-# Definição do pipeline híbrido
+# Definição do pipeline híbrido (TF-IDF + Lexicon)
+# class_weight="balanced" compensa o desbalanceamento de classes sem oversampling
 pipeline_hibrido = Pipeline([
     ("features", FeatureUnion([
         ("tfidf", tfidf),
         ("lexicon", LexiconScoreTransformer(lexicon=lexicon_palavras, usar_contexto=True, escala=1.0))
     ])),
-    ("clf", LogisticRegression(max_iter=1000))
-])
-
-# Definição do pipeline apenas TF-IDF
-pipeline_tfidf = Pipeline([
-    ("features", tfidf),
-    ("clf", LogisticRegression(max_iter=1000))
+    ("clf", LogisticRegression(max_iter=1000, class_weight="balanced", solver="lbfgs"))
 ])

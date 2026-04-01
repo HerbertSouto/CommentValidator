@@ -1,0 +1,8 @@
+[theme]
+# Base escura — dashboard de análise de dados
+base                   = "dark"
+primaryColor           = "#6366f1"          # índigo — botões, links, foco
+backgroundColor        = "#0d0f18"          # quase preto, fundo principal
+secondaryBackgroundColor = "#13162a"        # cards, painéis laterais
+textColor              = "#e2e8f0"          # slate-200 — leitura confortável
+font                   = "sans serif"
